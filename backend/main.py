@@ -140,18 +140,24 @@ def _doc_id(filename: str, idx: int) -> str:
 def _safe_filename(filename: str) -> str:
     """
     Strip any path components and reject names that would escape the vault.
+    Uses os.path.basename (a recognised sanitizer) to remove directory
+    traversal sequences, then validates the remaining characters.
     Raises HTTPException 400 if the name is invalid.
     """
-    # Take only the final path component and replace any remaining separators
-    name = Path(filename).name
-    # Allow only safe characters: alphanumerics, dots, dashes, underscores, spaces
-    if not name or re.search(r"[^\w.\-\s]", name):
+    # os.path.basename strips all directory components including traversal
+    name = os.path.basename(os.path.normpath(filename))
+    # Reject empty, relative-only results, and unsafe characters
+    if not name or name in (".", "..") or re.search(r"[^\w.\-]", name):
         raise HTTPException(status_code=400, detail=f"Invalid filename: {filename!r}")
-    # Resolve and confirm it stays within VAULT_DIR
-    resolved = (VAULT_DIR / name).resolve()
-    if not str(resolved).startswith(str(VAULT_DIR.resolve())):
-        raise HTTPException(status_code=400, detail="Filename escapes vault directory.")
     return name
+
+
+def _vault_path(safe_name: str) -> Path:
+    """Return a Path inside VAULT_DIR; raises 400 if it would escape."""
+    resolved = (VAULT_DIR / safe_name).resolve()
+    if not str(resolved).startswith(str(VAULT_DIR.resolve()) + os.sep):
+        raise HTTPException(status_code=400, detail="Filename escapes vault directory.")
+    return resolved
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -164,7 +170,7 @@ async def upload_document(file: UploadFile = File(...)) -> dict[str, Any]:
     """Ingest a text or PDF document into ChromaDB."""
     safe_name = _safe_filename(file.filename or "")
     log.info("Upload: %s", safe_name)
-    dest = VAULT_DIR / safe_name
+    dest = _vault_path(safe_name)
     content = await file.read()
     dest.write_bytes(content)
 
@@ -263,7 +269,7 @@ def remove_file(req: RemoveRequest) -> dict[str, str]:
         log.info("Deleted %d chunks for %s", len(ids_to_delete), safe_name)
 
     # Remove physical file
-    file_path = VAULT_DIR / safe_name
+    file_path = _vault_path(safe_name)
     if file_path.exists():
         file_path.unlink()
         log.info("Deleted file: %s", file_path)

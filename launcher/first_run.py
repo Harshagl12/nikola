@@ -270,6 +270,9 @@ class FirstRunWizard:
     # ------------------------------------------------------------------
 
     def _write_env(self) -> None:
+        # SECURITY: The .env file contains sensitive credentials. Ensure it is
+        # excluded from version control (.gitignore) and has restricted file
+        # permissions (readable only by the current user).
         lines = [
             f"TELEGRAM_BOT_TOKEN={self._values.get('TELEGRAM_BOT_TOKEN', '')}",
             f"ALLOWED_USER_IDS={self._values.get('ALLOWED_USER_IDS', '')}",

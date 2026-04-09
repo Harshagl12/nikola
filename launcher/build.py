@@ -61,7 +61,7 @@ def generate_icon(output_path: Path) -> None:
             font=font,
         )
 
-    images = [base.resize((s, s), Image.LANCZOS) for s in ICON_SIZES]
+    images = [base.resize((s, s), Image.Resampling.LANCZOS) for s in ICON_SIZES]
     images[0].save(
         output_path,
         format="ICO",

@@ -11,14 +11,17 @@ Endpoints
 """
 
 import hashlib
+import json
 import logging
 import os
+import re
 import shutil
 import time
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any
 
+import httpx
 import chromadb
 from chromadb.config import Settings
 from dotenv import load_dotenv
@@ -102,8 +105,6 @@ app.add_middleware(
 
 
 def _embed(text: str) -> list[float]:
-    import httpx
-
     resp = httpx.post(
         f"{OLLAMA_BASE_URL}/api/embeddings",
         json={"model": EMBED_MODEL, "prompt": text},
@@ -136,6 +137,23 @@ def _doc_id(filename: str, idx: int) -> str:
     return hashlib.sha256(f"{filename}:{idx}".encode()).hexdigest()[:20]
 
 
+def _safe_filename(filename: str) -> str:
+    """
+    Strip any path components and reject names that would escape the vault.
+    Raises HTTPException 400 if the name is invalid.
+    """
+    # Take only the final path component and replace any remaining separators
+    name = Path(filename).name
+    # Allow only safe characters: alphanumerics, dots, dashes, underscores, spaces
+    if not name or re.search(r"[^\w.\-\s]", name):
+        raise HTTPException(status_code=400, detail=f"Invalid filename: {filename!r}")
+    # Resolve and confirm it stays within VAULT_DIR
+    resolved = (VAULT_DIR / name).resolve()
+    if not str(resolved).startswith(str(VAULT_DIR.resolve())):
+        raise HTTPException(status_code=400, detail="Filename escapes vault directory.")
+    return name
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Routes — Document upload
 # ──────────────────────────────────────────────────────────────────────────────
@@ -144,8 +162,9 @@ def _doc_id(filename: str, idx: int) -> str:
 @app.post("/upload")
 async def upload_document(file: UploadFile = File(...)) -> dict[str, Any]:
     """Ingest a text or PDF document into ChromaDB."""
-    log.info("Upload: %s", file.filename)
-    dest = VAULT_DIR / file.filename
+    safe_name = _safe_filename(file.filename or "")
+    log.info("Upload: %s", safe_name)
+    dest = VAULT_DIR / safe_name
     content = await file.read()
     dest.write_bytes(content)
 
@@ -159,11 +178,11 @@ async def upload_document(file: UploadFile = File(...)) -> dict[str, Any]:
     ts = int(time.time())
 
     for i, chunk in enumerate(chunks):
-        ids.append(_doc_id(file.filename, i))
+        ids.append(_doc_id(safe_name, i))
         embeddings.append(_embed(chunk))
         documents.append(chunk)
         metadatas.append(
-            {"filename": file.filename, "chunk_index": i, "timestamp": ts}
+            {"filename": safe_name, "chunk_index": i, "timestamp": ts}
         )
 
     _collection.upsert(
@@ -172,8 +191,8 @@ async def upload_document(file: UploadFile = File(...)) -> dict[str, Any]:
         documents=documents,
         metadatas=metadatas,
     )
-    log.info("Indexed %d chunks for %s", len(chunks), file.filename)
-    return {"filename": file.filename, "chunks": len(chunks)}
+    log.info("Indexed %d chunks for %s", len(chunks), safe_name)
+    return {"filename": safe_name, "chunks": len(chunks)}
 
 
 def _extract_text(path: Path) -> str:
@@ -230,25 +249,26 @@ class RemoveRequest(BaseModel):
 @app.post("/rag/remove")
 def remove_file(req: RemoveRequest) -> dict[str, str]:
     """Delete a file's chunks from ChromaDB and remove the physical file."""
-    log.info("Removing file: %s", req.filename)
+    safe_name = _safe_filename(req.filename)
+    log.info("Removing file: %s", safe_name)
 
     # Find and delete chunks
     results = _collection.get(
-        where={"filename": req.filename},
+        where={"filename": safe_name},
         include=["metadatas"],
     )
     ids_to_delete = results.get("ids") or []
     if ids_to_delete:
         _collection.delete(ids=ids_to_delete)
-        log.info("Deleted %d chunks for %s", len(ids_to_delete), req.filename)
+        log.info("Deleted %d chunks for %s", len(ids_to_delete), safe_name)
 
     # Remove physical file
-    file_path = VAULT_DIR / req.filename
+    file_path = VAULT_DIR / safe_name
     if file_path.exists():
         file_path.unlink()
         log.info("Deleted file: %s", file_path)
 
-    return {"status": "ok", "filename": req.filename}
+    return {"status": "ok", "filename": safe_name}
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -315,8 +335,6 @@ async def chat(req: ChatRequest) -> StreamingResponse:
     Retrieve relevant chunks, build a context-augmented prompt, and
     stream the Ollama response back to the client.
     """
-    import httpx
-
     # Retrieve context from ChromaDB
     query_embedding = _embed(req.message)
     try:
@@ -356,10 +374,8 @@ async def chat(req: ChatRequest) -> StreamingResponse:
                 async for line in resp.aiter_lines():
                     if not line:
                         continue
-                    import json as _json
-
                     try:
-                        data = _json.loads(line)
+                        data = json.loads(line)
                     except Exception:
                         continue
                     token = data.get("message", {}).get("content", "")

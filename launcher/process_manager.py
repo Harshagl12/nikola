@@ -97,6 +97,10 @@ class ManagedProcess:
     def is_running(self) -> bool:
         return self._proc is not None and self._proc.poll() is None
 
+    def is_stopped(self) -> bool:
+        """Return True if this process was intentionally stopped."""
+        return self._stopped
+
     def restart(self) -> None:
         """Stop (if alive) then re-start."""
         self.stop()
@@ -163,7 +167,7 @@ class ProcessManager:
             if not self._running:
                 break
             for proc in list(self._processes.values()):
-                if not proc._stopped and not proc.is_running():
+                if not proc.is_stopped() and not proc.is_running():
                     log.warning("[watchdog] %s has crashed — restarting…", proc.name)
                     try:
                         proc.start()

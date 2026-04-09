@@ -132,6 +132,21 @@ def pull_model(model: str, progress_cb: Optional[Callable[[str], None]] = None) 
             raise RuntimeError(f"Failed to pull model '{model}'")
 
 
+def _parse_ollama_models(raw: str) -> set[str]:
+    """
+    Parse the output of `ollama list` and return a set of model names.
+    The first column of each data row (after the header) is the NAME field,
+    which may include a tag (e.g. ``llama3.1:8b``).
+    """
+    names: set[str] = set()
+    lines = raw.splitlines()
+    for line in lines[1:]:  # skip header row
+        parts = line.split()
+        if parts:
+            names.add(parts[0])
+    return names
+
+
 def ensure_models(
     models: list[str] = REQUIRED_MODELS,
     progress_cb: Optional[Callable[[str, str], None]] = None,
@@ -141,10 +156,14 @@ def ensure_models(
     *progress_cb(model, line)* receives streaming pull output.
     """
     result = _run(["ollama", "list"])
-    existing = result.stdout.decode(errors="replace")
+    existing = _parse_ollama_models(result.stdout.decode(errors="replace"))
     for model in models:
-        short = model.split(":")[0]
-        if short not in existing and model not in existing:
+        # Accept either "name:tag" exact match or "name" (without tag) match
+        name_only = model.split(":")[0]
+        already_present = model in existing or any(
+            m == model or m.split(":")[0] == name_only for m in existing
+        )
+        if not already_present:
             log.info("Pulling model: %s", model)
             pull_model(
                 model,

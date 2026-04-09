@@ -240,14 +240,23 @@ def _build_processes(pm) -> None:
     """Register backend, bot, and Electron in the ProcessManager."""
     from process_manager import ManagedProcess
 
-    # Load .env for environment variables
+    # Load .env variables into the child-process environment.
+    # python-dotenv handles quoting, escaping, and multi-line values correctly.
     env = os.environ.copy()
     if ENV_FILE.exists():
-        for line in ENV_FILE.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                k, v = line.split("=", 1)
-                env[k.strip()] = v.strip()
+        try:
+            from dotenv import dotenv_values
+
+            env.update(
+                {k: v for k, v in dotenv_values(ENV_FILE).items() if v is not None}
+            )
+        except ImportError:
+            # Fallback: simple line-by-line parsing (no quoting support)
+            for line in ENV_FILE.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, v = line.split("=", 1)
+                    env[k.strip()] = v.strip()
 
     backend = ManagedProcess(
         name="backend",

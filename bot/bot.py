@@ -110,9 +110,28 @@ async def _post(path: str, **kwargs) -> dict:
         return resp.json()
 
 
+import re as _re
+
+_SAFE_NAME_RE = _re.compile(r"^[\w.\-]{1,255}$")
+
+
+def _validate_filename(filename: str) -> str:
+    """Return the basename of *filename* after rejecting unsafe names."""
+    import os as _os
+
+    name = _os.path.basename(_os.path.normpath(filename))
+    if not name or not _SAFE_NAME_RE.match(name) or name in (".", ".."):
+        raise ValueError(f"Invalid filename: {filename!r}")
+    return name
+
+
 def _file_size(filename: str) -> str:
-    """Return a human-readable file size string."""
-    path = VAULT_DIR / filename
+    """Return a human-readable file size string for *filename* in the vault."""
+    try:
+        safe_name = _validate_filename(filename)
+    except ValueError:
+        return "unknown"
+    path = VAULT_DIR / safe_name
     if path.exists():
         size = path.stat().st_size
         for unit in ("B", "KB", "MB", "GB"):

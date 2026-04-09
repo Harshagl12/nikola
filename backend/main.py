@@ -165,7 +165,7 @@ def _stored_path(content: bytes, original_name: str) -> Path:
     The returned path is always inside VAULT_DIR and contains no user-
     controlled path components, so it cannot cause path traversal.
     """
-    content_hash = hashlib.sha256(content).hexdigest()[:32]
+    content_hash = hashlib.sha256(content).hexdigest()  # 64 hex chars
     # Use only the suffix from the already-validated name; limit its length
     suffix = Path(original_name).suffix[:10]
     stored_name = f"{content_hash}{suffix}"

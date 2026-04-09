@@ -1,0 +1,13 @@
+{
+  "name": "nikola-sidebar",
+  "version": "1.0.0",
+  "description": "Nikola AI Assistant — Electron sidebar",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "dependencies": {
+    "electron": "^30.0.0"
+  },
+  "devDependencies": {}
+}

@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Nikola</title>
+  <style>
+    /* ── Reset ── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    /* ── Palette ── */
+    :root {
+      --bg:       #0a0a14;
+      --surface:  #13132a;
+      --border:   #2a2a50;
+      --accent:   #5555ff;
+      --danger:   #cc3333;
+      --text:     #e0e0ff;
+      --muted:    #888aaa;
+      --radius:   8px;
+      --font:     'Segoe UI', system-ui, sans-serif;
+    }
+
+    body {
+      font-family: var(--font);
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* ── Header ── */
+    header {
+      padding: 14px 18px 10px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    header h1 {
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: var(--accent);
+      letter-spacing: 0.08em;
+    }
+    header .subtitle {
+      font-size: 0.72rem;
+      color: var(--muted);
+      margin-left: auto;
+    }
+
+    /* ── Main scrollable area ── */
+    main {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+    main::-webkit-scrollbar { width: 6px; }
+    main::-webkit-scrollbar-track { background: var(--bg); }
+    main::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+    /* ── Sections ── */
+    section {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px;
+    }
+    section h2 {
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--muted);
+      margin-bottom: 10px;
+    }
+
+    /* ── Drop zone ── */
+    #drop-zone {
+      border: 2px dashed var(--border);
+      border-radius: var(--radius);
+      padding: 24px 16px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color 0.2s, background 0.2s;
+    }
+    #drop-zone:hover, #drop-zone.drag-over {
+      border-color: var(--accent);
+      background: rgba(85, 85, 255, 0.06);
+    }
+    #drop-zone p { font-size: 0.82rem; color: var(--muted); }
+    #drop-zone p strong { color: var(--text); }
+    #drop-zone input { display: none; }
+
+    /* ── Session / file list ── */
+    #file-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      max-height: 220px;
+      overflow-y: auto;
+    }
+    #file-list::-webkit-scrollbar { width: 4px; }
+    #file-list::-webkit-scrollbar-thumb { background: var(--border); }
+
+    .file-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 8px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      font-size: 0.8rem;
+    }
+    .file-item .file-name {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .file-item .file-meta { color: var(--muted); font-size: 0.72rem; white-space: nowrap; }
+    .file-item .btn-delete {
+      background: none;
+      border: none;
+      color: var(--danger);
+      cursor: pointer;
+      font-size: 1rem;
+      line-height: 1;
+      padding: 0 2px;
+      border-radius: 3px;
+      transition: background 0.15s;
+    }
+    .file-item .btn-delete:hover { background: rgba(204,51,51,0.15); }
+
+    .empty-hint { color: var(--muted); font-size: 0.8rem; text-align: center; padding: 12px 0; }
+
+    /* ── Clear-all button ── */
+    #clear-all-btn {
+      width: 100%;
+      padding: 8px;
+      background: var(--danger);
+      color: #fff;
+      border: none;
+      border-radius: var(--radius);
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.2s;
+      margin-top: 10px;
+    }
+    #clear-all-btn:hover { opacity: 0.85; }
+    #clear-all-btn:disabled { opacity: 0.4; cursor: default; }
+
+    /* ── Confirm bar ── */
+    #confirm-bar {
+      display: none;
+      align-items: center;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    #confirm-bar span { font-size: 0.78rem; color: var(--danger); flex: 1; }
+    #confirm-bar button {
+      padding: 5px 12px;
+      border-radius: 5px;
+      border: none;
+      cursor: pointer;
+      font-size: 0.78rem;
+      font-weight: 600;
+    }
+    #btn-yes-wipe { background: var(--danger); color: #fff; }
+    #btn-cancel-wipe { background: var(--border); color: var(--text); }
+
+    /* ── Chat ── */
+    #chat-messages {
+      flex: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding-bottom: 4px;
+    }
+    #chat-messages::-webkit-scrollbar { width: 4px; }
+    #chat-messages::-webkit-scrollbar-thumb { background: var(--border); }
+
+    .msg {
+      max-width: 90%;
+      padding: 8px 12px;
+      border-radius: var(--radius);
+      font-size: 0.82rem;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .msg.user { align-self: flex-end; background: var(--accent); color: #fff; }
+    .msg.ai   { align-self: flex-start; background: var(--surface); border: 1px solid var(--border); }
+
+    /* ── Chat input ── */
+    #chat-form {
+      display: flex;
+      gap: 8px;
+      padding-top: 10px;
+      border-top: 1px solid var(--border);
+    }
+    #chat-input {
+      flex: 1;
+      padding: 8px 12px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text);
+      font-size: 0.82rem;
+      outline: none;
+      resize: none;
+      height: 38px;
+    }
+    #chat-input:focus { border-color: var(--accent); }
+    #chat-send {
+      padding: 0 16px;
+      background: var(--accent);
+      border: none;
+      border-radius: var(--radius);
+      color: #fff;
+      font-weight: 700;
+      cursor: pointer;
+      font-size: 0.9rem;
+      transition: opacity 0.2s;
+    }
+    #chat-send:disabled { opacity: 0.5; cursor: default; }
+
+    /* ── Status bar ── */
+    footer {
+      padding: 6px 16px;
+      font-size: 0.7rem;
+      color: var(--muted);
+      border-top: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    #status-dot {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: #444;
+      display: inline-block;
+    }
+    #status-dot.ok   { background: #44cc66; }
+    #status-dot.err  { background: var(--danger); }
+  </style>
+</head>
+<body>
+
+  <!-- ── Header ── -->
+  <header>
+    <h1>NIKOLA</h1>
+    <span class="subtitle" id="refresh-label">auto-refresh 60 s</span>
+  </header>
+
+  <!-- ── Scrollable main ── -->
+  <main>
+
+    <!-- Drop Zone -->
+    <section>
+      <h2>Upload Document</h2>
+      <div id="drop-zone">
+        <input type="file" id="file-input" accept=".txt,.pdf,.md,.csv" />
+        <p><strong>Drop a file here</strong><br />or click to select</p>
+      </div>
+      <p id="upload-status" style="font-size:0.75rem;color:var(--muted);margin-top:6px;"></p>
+    </section>
+
+    <!-- Session Panel -->
+    <section>
+      <h2>Indexed Documents <span id="file-count" style="color:var(--accent);"></span></h2>
+      <div id="file-list">
+        <p class="empty-hint">No documents indexed yet.</p>
+      </div>
+
+      <!-- Clear all -->
+      <button id="clear-all-btn">🗑 Clear All Documents</button>
+      <div id="confirm-bar">
+        <span>⚠️ This cannot be undone!</span>
+        <button id="btn-cancel-wipe">Cancel</button>
+        <button id="btn-yes-wipe">Yes, wipe</button>
+      </div>
+    </section>
+
+    <!-- Chat -->
+    <section style="flex:1;display:flex;flex-direction:column;">
+      <h2>Chat</h2>
+      <div id="chat-messages"></div>
+      <form id="chat-form" onsubmit="return false;">
+        <textarea id="chat-input" placeholder="Ask Nikola anything…" rows="1"></textarea>
+        <button id="chat-send">↑</button>
+      </form>
+    </section>
+
+  </main>
+
+  <!-- ── Footer ── -->
+  <footer>
+    <span id="status-dot"></span>
+    <span id="status-text">Connecting…</span>
+  </footer>
+
+  <script src="renderer.js"></script>
+</body>
+</html>

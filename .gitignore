@@ -1,0 +1,28 @@
+# Environment / secrets
+.env
+
+# Virtual environments
+.venv_backend/
+.venv_bot/
+
+# Logs
+*.log
+
+# PyInstaller build artefacts
+dist/
+build/
+*.spec
+
+# Electron
+electron/node_modules/
+
+# Python caches
+__pycache__/
+*.pyc
+*.pyo
+
+# ChromaDB local data
+vault/.chroma/
+
+# macOS
+.DS_Store

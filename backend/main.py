@@ -137,27 +137,40 @@ def _doc_id(filename: str, idx: int) -> str:
     return hashlib.sha256(f"{filename}:{idx}".encode()).hexdigest()[:20]
 
 
-def _safe_filename(filename: str) -> str:
+# ──────────────────────────────────────────────────────────────────────────────
+# Filename validation
+# ──────────────────────────────────────────────────────────────────────────────
+
+# Only allow names that look like safe filenames: word chars, dots, and hyphens.
+_SAFE_NAME_RE = re.compile(r"^[\w.\-]{1,255}$")
+
+
+def _validate_original_name(filename: str) -> str:
     """
-    Strip any path components and reject names that would escape the vault.
-    Uses os.path.basename (a recognised sanitizer) to remove directory
-    traversal sequences, then validates the remaining characters.
-    Raises HTTPException 400 if the name is invalid.
+    Validate and return the *basename* of *filename*.
+    Raises HTTPException 400 for any name that could cause path traversal.
+    The returned value is used only as metadata (not for filesystem paths).
     """
-    # os.path.basename strips all directory components including traversal
     name = os.path.basename(os.path.normpath(filename))
-    # Reject empty, relative-only results, and unsafe characters
-    if not name or name in (".", "..") or re.search(r"[^\w.\-]", name):
+    if not name or not _SAFE_NAME_RE.match(name) or name in (".", ".."):
         raise HTTPException(status_code=400, detail=f"Invalid filename: {filename!r}")
     return name
 
 
-def _vault_path(safe_name: str) -> Path:
-    """Return a Path inside VAULT_DIR; raises 400 if it would escape."""
-    resolved = (VAULT_DIR / safe_name).resolve()
-    if not str(resolved).startswith(str(VAULT_DIR.resolve()) + os.sep):
-        raise HTTPException(status_code=400, detail="Filename escapes vault directory.")
-    return resolved
+def _stored_path(content: bytes, original_name: str) -> Path:
+    """
+    Derive a safe, deterministic storage path from the *content* hash and
+    the file extension extracted from the validated *original_name*.
+
+    The returned path is always inside VAULT_DIR and contains no user-
+    controlled path components, so it cannot cause path traversal.
+    """
+    content_hash = hashlib.sha256(content).hexdigest()[:32]
+    # Use only the suffix from the already-validated name; limit its length
+    suffix = Path(original_name).suffix[:10]
+    stored_name = f"{content_hash}{suffix}"
+    # VAULT_DIR is a fully-controlled constant; stored_name is hash-derived
+    return VAULT_DIR / stored_name
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -168,10 +181,12 @@ def _vault_path(safe_name: str) -> Path:
 @app.post("/upload")
 async def upload_document(file: UploadFile = File(...)) -> dict[str, Any]:
     """Ingest a text or PDF document into ChromaDB."""
-    safe_name = _safe_filename(file.filename or "")
-    log.info("Upload: %s", safe_name)
-    dest = _vault_path(safe_name)
+    original_name = _validate_original_name(file.filename or "")
     content = await file.read()
+
+    # Store the file under a content-hash derived name (no user-input in path)
+    dest = _stored_path(content, original_name)
+    log.info("Upload: %s → %s", original_name, dest.name)
     dest.write_bytes(content)
 
     # Extract text
@@ -184,11 +199,16 @@ async def upload_document(file: UploadFile = File(...)) -> dict[str, Any]:
     ts = int(time.time())
 
     for i, chunk in enumerate(chunks):
-        ids.append(_doc_id(safe_name, i))
+        ids.append(_doc_id(original_name, i))
         embeddings.append(_embed(chunk))
         documents.append(chunk)
         metadatas.append(
-            {"filename": safe_name, "chunk_index": i, "timestamp": ts}
+            {
+                "filename": original_name,
+                "stored_name": dest.name,
+                "chunk_index": i,
+                "timestamp": ts,
+            }
         )
 
     _collection.upsert(
@@ -197,8 +217,8 @@ async def upload_document(file: UploadFile = File(...)) -> dict[str, Any]:
         documents=documents,
         metadatas=metadatas,
     )
-    log.info("Indexed %d chunks for %s", len(chunks), safe_name)
-    return {"filename": safe_name, "chunks": len(chunks)}
+    log.info("Indexed %d chunks for %s", len(chunks), original_name)
+    return {"filename": original_name, "chunks": len(chunks)}
 
 
 def _extract_text(path: Path) -> str:
@@ -255,26 +275,36 @@ class RemoveRequest(BaseModel):
 @app.post("/rag/remove")
 def remove_file(req: RemoveRequest) -> dict[str, str]:
     """Delete a file's chunks from ChromaDB and remove the physical file."""
-    safe_name = _safe_filename(req.filename)
-    log.info("Removing file: %s", safe_name)
+    original_name = _validate_original_name(req.filename)
+    log.info("Removing file: %s", original_name)
 
-    # Find and delete chunks
+    # Fetch metadata to discover the hash-derived stored filename
     results = _collection.get(
-        where={"filename": safe_name},
+        where={"filename": original_name},
         include=["metadatas"],
     )
     ids_to_delete = results.get("ids") or []
+    metadatas_found = results.get("metadatas") or []
+
+    # Collect unique stored_name values (path is hash-derived, not from user)
+    stored_names: set[str] = set()
+    for meta in metadatas_found:
+        if meta and meta.get("stored_name"):
+            stored_names.add(meta["stored_name"])
+
     if ids_to_delete:
         _collection.delete(ids=ids_to_delete)
-        log.info("Deleted %d chunks for %s", len(ids_to_delete), safe_name)
+        log.info("Deleted %d chunks for %s", len(ids_to_delete), original_name)
 
-    # Remove physical file
-    file_path = _vault_path(safe_name)
-    if file_path.exists():
-        file_path.unlink()
-        log.info("Deleted file: %s", file_path)
+    # Remove physical files — paths are derived from our hash, not user input
+    for stored_name in stored_names:
+        # stored_name is a hex digest + short suffix we wrote ourselves
+        file_path = VAULT_DIR / stored_name
+        if file_path.exists():
+            file_path.unlink()
+            log.info("Deleted stored file: %s", file_path)
 
-    return {"status": "ok", "filename": safe_name}
+    return {"status": "ok", "filename": original_name}
 
 
 # ──────────────────────────────────────────────────────────────────────────────
